@@ -2,12 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\StoreDueRequest;
 use App\Http\Requests\UpdateDueRequest;
-use Illuminate\Http\Request;
 use App\Models\Due;
 use App\Repositories\DueRepository;
 use App\Utils\Util;
 use App\Validators\JsonValidator;
+use Illuminate\Support\Facades\Storage;
 
 class DueController extends Controller
 {
@@ -36,35 +37,29 @@ class DueController extends Controller
     {
         $due = $this->dueRepository->getDueById($id);
 
+        if ($due) {
+            $due->due_itens;
+        }
+
         $tableHead = ['Item', 'Nota/Série/Item', 'Descrição Complementar', 'NCM', 'Enquadramento(s)', 'VMLE Moeda', 'VMCV Moeda', 'Peso Líquido'];
 
         return view('update-due', compact('tableHead', 'due'));
     }
 
-    public function store(Request $request)
+    public function store(StoreDueRequest $request)
     {
-        $request->validate([
-            'json' => 'required|mimes:json|max:2048',
-        ]);
-
         $filePath = $request->file('json')->storeAs('uploads', 'temp.json');
 
-        $jsonContent = file_get_contents(storage_path("app/$filePath"));
+        $jsonContent = Storage::get($filePath);
         $dueData = json_decode($jsonContent, true);
 
         if (!JsonValidator::validateDueData($dueData)) {
             return response()->json(['message' => 'JSON inválido'], 400);
         }
 
-        $due = $this->dueRepository->createDue($dueData);
+        $this->calculateTotals($dueData);
 
-        foreach ($dueData['due_itens'] as $item) {
-            $result = Util::extractDataNfe($item['nfe_chave']);
-            $item['nfe_numero'] = $result['nfe_numero'];
-            $item['nfe_serie'] = $result['nfe_serie'];
-
-            $this->dueRepository->createDueItem($due, $item);
-        }
+        $this->processDueItems($dueData['due_itens'], $due = $this->dueRepository->createDue($dueData));
 
         return response()->json(['message' => 'Due processada com sucesso']);
     }
@@ -82,5 +77,37 @@ class DueController extends Controller
         $due->save();
 
         return response()->json(['message' => 'Due atualizada com sucesso']);
+    }
+
+    private function processDueItems(array $dueItems, Due $due)
+    {
+        foreach ($dueItems as $item) {
+            $result = Util::extractDataNfe($item['nfe_chave']);
+            $item['nfe_numero'] = $result['nfe_numero'];
+            $item['nfe_serie'] = $result['nfe_serie'];
+
+            $item['due_id'] = $due->id;
+            $item['vmle_moeda'] = $item['vmle'];
+            $item['vmcv_moeda'] = $item['vmcv'];
+
+            $this->dueRepository->createDueItem($item);
+        }
+    }
+
+    private function calculateTotals(array &$dueData): void
+    {
+        $totals = [
+            'total_vmle_moeda' => null,
+            'total_vmcv_moeda' => null,
+            'total_peso_liquido' => null,
+        ];
+    
+        foreach ($dueData['due_itens'] as $item) {
+            $totals['total_vmle_moeda'] += $item['vmle'];
+            $totals['total_vmcv_moeda'] += $item['vmcv'];
+            $totals['total_peso_liquido'] += $item['peso_liquido'];
+        }
+
+        $dueData = array_merge($dueData, $totals);
     }
 }
