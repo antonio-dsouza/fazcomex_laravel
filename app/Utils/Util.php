@@ -2,6 +2,8 @@
 
 namespace App\Utils;
 
+use Illuminate\Http\JsonResponse;
+
 class Util
 {
     public static function extractDataNfe(string $nfeChave)
@@ -13,5 +15,10 @@ class Util
             'nfe_serie' => $serie,
             'nfe_numero' => $number,
         ];
+    }
+
+    public static function createMessage(string $key, int $statusCode = 200): JsonResponse
+    {
+        return response()->json(['message' => __('due.' . $key)], $statusCode);
     }
 }
